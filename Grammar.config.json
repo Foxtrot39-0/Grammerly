@@ -1,0 +1,90 @@
+/**
+ * @name GrammarCorrection
+ * @description Corrects grammar in messages.
+ * @version 1.0.1
+ * @author YourName
+ */
+
+const { Plugin, WebpackModules, Patcher, ReactComponents, Settings } = BdApi;
+const LanguageToolApi = 'https://api.languagetoolplus.com/v2/check';
+
+class GrammarCorrection extends Plugin {
+    constructor() {
+        super();
+        this.defaultSettings = {
+            enableGrammarCorrection: true
+        };
+    }
+
+    getSettingsPanel() {
+        const panel = document.createElement('div');
+
+        new Settings.SettingGroup('Grammar Correction Settings')
+            .appendTo(panel)
+            .append(
+                new Settings.Switch(
+                    'Enable Grammar Correction',
+                    'Toggle grammar correction on or off.',
+                    this.settings.enableGrammarCorrection,
+                    (value) => {
+                        this.settings.enableGrammarCorrection = value;
+                        this.saveSettings();
+                    }
+                )
+            );
+
+        return panel;
+    }
+
+    onStart() {
+        BdApi.showToast('GrammarCorrection plugin loaded');
+        this.loadSettings(this.defaultSettings);
+        this.patchMessageSend();
+    }
+
+    onStop() {
+        BdApi.showToast('GrammarCorrection plugin stopped');
+        Patcher.unpatchAll('GrammarCorrection');
+    }
+
+    patchMessageSend() {
+        const MessageEvents = WebpackModules.findByProps('sendMessage', 'editMessage');
+        Patcher.instead('GrammarCorrection', MessageEvents, 'sendMessage', async (thisObject, [channelId, message]) => {
+            if (this.settings.enableGrammarCorrection) {
+                const correctedText = await this.correctGrammar(message.content);
+                message.content = correctedText;
+            }
+            return thisObject.sendMessage(channelId, message);
+        });
+    }
+
+    async correctGrammar(text) {
+        try {
+            const response = await fetch(LanguageToolApi, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded'
+                },
+                body: new URLSearchParams({
+                    language: 'en-US',
+                    text
+                })
+            });
+
+            const result = await response.json();
+            if (result.matches.length > 0) {
+                result.matches.forEach(match => {
+                    if (match.replacements.length > 0) {
+                        text = text.replace(match.context.text.slice(match.context.offset, match.context.offset + match.context.length), match.replacements[0].value);
+                    }
+                });
+            }
+            return text;
+        } catch (error) {
+            console.error('Error correcting grammar:', error);
+            return text;
+        }
+    }
+}
+
+module.exports = GrammarCorrection;
